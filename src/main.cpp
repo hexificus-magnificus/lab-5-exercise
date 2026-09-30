@@ -11,7 +11,7 @@ const int FPS_LIMIT = 30;
 
 using Point2D = sf::Vector2f;
 
-void drawLine(Point2D from, Point2D to, float width, sf::RenderWindow *w) {
+void drawLine(Point2D from, Point2D to, float width, sf::Color c, sf::RenderWindow *w) {
 	Point2D btwn = to - from;
 	float m = btwn.y/btwn.x;
 	float perpm = -1/m;
@@ -29,7 +29,7 @@ void drawLine(Point2D from, Point2D to, float width, sf::RenderWindow *w) {
 	l.setPoint(1, {c1.x, c1.y});
 	l.setPoint(2, {c2.x, c2.y});
 	l.setPoint(3, {c3.x, c3.y});
-	l.setFillColor(sf::Color(50, 50, 255));
+	l.setFillColor(c);
 	w->draw(l);
 }
 
@@ -64,32 +64,46 @@ float bernstein(int i, int n, float t) {
 }
 
 Point2D getPoint(const std::vector<sf::Vector2f>& pts, float t) {
-	float tinv = 1-t;
-	float x = 0;
-	float y = 0;
-	int k = pts.size()-1;
-	for (int i = 0; i < pts.size(); ++i) {
-		float c = bernstein(i, k, t); 
-		x += c * pts[i].x;
-		y += c * pts[i].y;
+	int segcount = (pts.size()-1) / 3;
+	int seg = 0;
+	if (t < 1) {
+		seg = (int)(t*segcount);
+		t = t*segcount - seg;
+	} else {
+		seg = segcount-1;
+	}
+	int start = seg*3;
+	float x, y;
+	x = y = 0;
+	for (int i = 0; i < 4; i++) {
+		float c = bernstein(i, 3, t);
+		x += c * pts[start+i].x;
+		y += c * pts[start+i].y;
 	}
 	return {x, y};
 }
 
 // TODO: (Part 2) Define a function that returns the curve's slope at t in [0, 1].
 Point2D getSlope(const std::vector<sf::Vector2f>& pts, float t) {
-	float tinv = 1-t;
+	int segcount = (pts.size()-1) / 3;
+	int seg = 0;
+	if (t < 1) {
+		seg = (int)(t*segcount);
+		t = t*segcount - seg;
+	} else {
+		seg = segcount-1;
+	}
+	int start = seg*3;
 	float x = 0;
 	float y = 0;
-	int k = pts.size()-1;
-	for (int i = 0; i < k; i++) {
-		sf::Vector2f d = pts[i+1] - pts[i];
-		float c = bernstein(i, k-1, t);
+	for (int i = 0; i < 3; i++) {
+		sf::Vector2f d = pts[start+i+1] - pts[start+i];
+		float c = bernstein(i, 2, t);
 		x += c*d.x;
 		y += c*d.y;
 	}
-	x *= k;
-	y *= k;
+	x *= 3;
+	y *= 3;
 	return Point2D{x, y};
 }
 
@@ -113,33 +127,59 @@ void handleInput(sf::Window& window, bool& shouldQuit) {
 	    for (int i = 0; i < curve.size(); i++) {
 		float l = ((Point2D)mouse->position - curve[i]).length();
 	    	if (l < closel) {
-			closel = l;
-			dragPt = i;
-		}
+				closel = l;
+				dragPt = i;
+			}
 	    }
         } else if (const auto* mouse = event->getIf<sf::Event::MouseButtonReleased>()) {
             // TODO: (Part 3) On left-button release, stop dragging.
-	    dragPt = -1;
+	    	dragPt = -1;
         } else if (const auto* mouse = event->getIf<sf::Event::MouseMoved>()) {
             // TODO: (Part 3) Move the selected control point to mouse->position.
             // TODO: (Part 4) Maintain matching slopes at shared endpoints.
             // When moving point 3, move point 5 without changing its distance
             // from point 4 (point numbers here start at 1).
-	    if (dragPt >= 0) {
-	    	curve[dragPt] = (Point2D)mouse->position;
-	    }
+			auto newP = (Point2D)mouse->position;
+			if (dragPt >= 0) {
+				if (dragPt % 3 == 0) {
+					if (dragPt > 0) {
+						Point2D d = curve[dragPt-1] - curve[dragPt];
+						curve[dragPt-1] = newP + d;
+					}
+					if (dragPt < curve.size()-1) {
+						Point2D d = curve[dragPt+1] - curve[dragPt];
+						curve[dragPt+1] = newP + d;
+					}
+				} else if (dragPt % 3 == 1) {
+					int other = dragPt - 2;
+					if (other > 0) {
+						Point2D d = curve[dragPt - 1] - curve[dragPt];
+						float l = (curve[other] - curve[dragPt - 1]).length();
+						curve[other] = curve[dragPt-1] + l * d.normalized();
+					}
+				} else {
+					int other = dragPt + 2;
+					if (other < curve.size()) {
+						Point2D d = curve[dragPt + 1] - curve[dragPt];
+						float l = (curve[dragPt + 1] - curve[other]).length();
+						curve[other] = curve[dragPt+1] + l * d.normalized();
+					}
+				}
+				curve[dragPt] = newP;
+			}
         } else if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
             // TODO: (Part 4) '+' adds three control points; '-' removes three,
             // keeping at least four points.
-	    if (key->scancode == sf::Keyboard::Scan::Equal) {
-	        curve.push_back(getPoint(curve, 1.2));
-		curve.push_back(getPoint(curve, 1.1));
-		curve.push_back(getPoint(curve, 1.3));
-	    } else if (key->scancode == sf::Keyboard::Scan::Hyphen && curve.size() > 4) {
-	    	curve.pop_back();
-		curve.pop_back();
-		curve.pop_back();
-	    }
+			if (key->scancode == sf::Keyboard::Scan::Equal) {
+				Point2D d = curve[curve.size()-1] - curve[curve.size()-2];
+				curve.push_back(d + curve.back());
+				curve.push_back(getPoint(curve, 1.2));
+				curve.push_back(getPoint(curve, 1.3));
+			} else if (key->scancode == sf::Keyboard::Scan::Hyphen && curve.size() > 4) {
+				curve.pop_back();
+				curve.pop_back();
+				curve.pop_back();
+			}
         }
     }
 }
@@ -150,13 +190,13 @@ void render(sf::RenderWindow& window) {
     // TODO: (Part 1) Sample GetPoint over t in [0, 1] and connect samples using the line-drawing
     // code from your project. Draw all four control points as circles after drawing the curve.
     // ====== ====== ======
-    int sampleRes = 20;
+    int sampleRes = 100;
     std::vector<Point2D> sample(sampleRes);
     sample[0] = getPoint(curve, 0);
     for (int i = 1; i < sampleRes; i++) {
 	float pct = (float)i/(sampleRes-1);
     	sample[i] = getPoint(curve, pct);
-	drawLine(sample[i-1], sample[i], 1, &window);
+		drawLine(sample[i-1], sample[i], 1, sf::Color(50, 50, 255), &window);
     }
     for (auto pt : curve) {
     	drawCircle(pt, 5, &window);
@@ -175,11 +215,11 @@ void render(sf::RenderWindow& window) {
     // ====== ====== ======
     for (int i = 0; i < curve.size(); ++i) {
         if (i%3 == 0) {
-		if (i-1 > 0)
-			drawLine(curve[i-1], curve[i], 2, &window);
-		if (i+1 < curve.size())
-			drawLine(curve[i+1], curve[i], 2, &window);
-	}
+			if (i-1 > 0)
+				drawLine(curve[i-1], curve[i], 2, sf::Color(50, 255, 50), &window);
+			if (i+1 < curve.size())
+				drawLine(curve[i+1], curve[i], 2, sf::Color(50, 255, 50), &window);
+		}
     }
 
     // ====== ====== ======
